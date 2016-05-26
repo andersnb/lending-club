@@ -47,8 +47,7 @@ library(kernlab)
 #
 # read in the lending club data
 #
-setwd("/Users/andersnb/lending-club/my-analysis")
-loans <- read.csv("../data/LoanStats3a_securev1.csv")
+loans <- read.csv("./LoanStats3a_securev1.csv")
 str(loans)  
 
 # initialize random number generator
