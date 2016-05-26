@@ -1,0 +1,529 @@
+---
+title: "Predicting Bad Lending Club Loans for Fixed Loan Grades with Multiple Different Models"
+author: "Bill Anderson (william.david.anderson@gmail.com)"
+date: "17 May 2016"
+output: pdf_document
+---
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#
+# set the following parameters depending on the amount of information you want to see in the report
+#
+
+# set to TRUE for detailed exploratory plots (note: produces several hundred pages!)
+explPlots = FALSE
+
+# set to TRUE for detailed scatter plots to check for collinearity (note: produced several pages with very detailed plots!)
+collScatterPlots = FALSE
+```
+
+# Introduction and Executive Summary
+This document presents an analysis of lending club data for loans issued between June 2007 and December 2011, with the goal of predicting which loans will go "bad" (i.e., the borrower misses a payment or defaults). This analysis is done with the loan grade held constant (e.g., analysis for all A loans, analysis for all B loans, etc.), which can be useful; for example, if we could identify all the grade D loans that would not go bad, we would have the best of both worlds: high interest rates, but no risk of loss from default. For this study, loans with grade A, B, C, and D were considered (not enough data for grade E loans). Also, this study used four different model types: logistic regression, random forest, gradient boost, and support vector machines. The results from the different models were similar, although the gradient boost results were slightly more accurate (at least for the given random number seed).
+
+For the grade C and D loans (the ones with the most defaults), we can correctly identify over 65% of the loans that will go bad. Also for these same loan grades, all four of the models identified the same two predictors that were most important in predicting which loans will go bad: FICO score and the number of credit inquiries in the past six months.
+
+Details on these and other results are shown below.
+
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+
+# load libraries
+library(klaR)
+library(class)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(gridExtra)
+library(reshape)
+library(randomForest)
+library(gbm)
+library(caret)
+library(pROC)
+library(kernlab)
+
+```
+# Data Ingest and Initialization Steps
+```{r, cache=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=60), fig.width=16}
+
+#
+# read in the lending club data
+#
+setwd("/Users/andersnb/lending-club/my-analysis")
+loans <- read.csv("../data/LoanStats3a_securev1.csv")
+str(loans)  
+
+# initialize random number generator
+set.seed(1)
+
+```
+# Data Cleaning
+In this section, we convert data types, get rid of unneeded data, etc.
+
+```{r, cache=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=60), fig.width=16, tidy=FALSE}
+
+# 
+# Loans in the dataset were issued at different times and have terms of 3 or 5 years.
+# We want all loans to have the same chance to reach maturity or the results could be 
+# misleading. Consider an extreme case where a loan is issued the month before the end 
+# of when data is collected. The loan is less likely to be in default after just one 
+# month than if it's been outstanding for 3 (or 5) years and such loans could result in 
+# misleading interpretations.  Thus, since this dataset ends at Feb 2016, we should only 
+# consider loans that were issued 5 years or more ago, or that were issued Feb 2011 or 
+# earlier.
+# 
+loans <- filter(loans, issue_d != "")
+loans$issue_d <- factor(loans$issue_d)
+loans$issue_d <- parse_date_time(paste("01-", loans$issue_d), "%d-%b-%Y") 
+loans <- filter(loans, issue_d  <= "2011-02-01")
+
+# 
+# convert to a date type
+# 
+loans <- filter(loans, last_pymnt_d != "")
+loans$last_pymnt_d <- factor(loans$last_pymnt_d)
+loans$last_pymnt_d <- parse_date_time(paste("01-", loans$last_pymnt_d), "%d-%b-%Y") 
+
+#
+# convert to a date type
+#
+loans <- filter(loans, earliest_cr_line != "")
+loans$earliest_cr_line <- factor(loans$earliest_cr_line)
+loans$earliest_cr_line <- parse_date_time(paste("01-", loans$earliest_cr_line), "%d-%b-%Y") 
+
+#
+# convert to a date type
+#
+loans <- filter(loans, last_credit_pull_d != "")
+loans$last_credit_pull_d <- factor(loans$last_credit_pull_d)
+loans$last_credit_pull_d <- parse_date_time(paste("01-", loans$last_credit_pull_d), "%d-%b-%Y") 
+
+# get rid of empty factor
+loans <- filter(loans, term != "")
+loans$term <- factor(loans$term)
+
+# convert interest rate from string to float
+loans$int_rate <- gsub("%", "", loans$int_rate)
+loans$int_rate <- gsub(" ", "", loans$int_rate)
+loans$int_rate <- as.numeric(loans$int_rate)
+
+# get rid of empty factor
+loans <- filter(loans, grade != "")
+loans$grade <- factor(loans$grade)
+
+# get rid of empty factor
+loans <- filter(loans, sub_grade != "")
+loans$sub_grade <- factor(loans$sub_grade)
+
+# get rid of empty factor
+loans <- filter(loans, emp_length != "")
+loans$emp_length <- factor(loans$emp_length)
+
+# get rid of empty factor
+loans <- filter(loans, home_ownership != "")
+loans$home_ownership <- factor(loans$home_ownership)
+
+# get rid of empty factor
+loans <- filter(loans, verification_status != "")
+loans$verification_status <- factor(loans$verification_status)
+
+# get rid of empty factor
+loans <- filter(loans, pymnt_plan != "")
+loans$pymnt_plan <- factor(loans$pymnt_plan)
+
+# create a variable that's true if the desc is empty, else false
+loans <- mutate(loans, desc_empty = as.factor(ifelse(desc == "", 1, 0)))
+
+# get rid of empty factor
+loans <- filter(loans, purpose != "")
+loans$purpose <- factor(loans$purpose)
+
+# get rid of empty factor
+loans <- filter(loans, zip_code != "")
+loans$zip_code <- factor(loans$zip_code)
+
+# get rid of empty factor
+loans <- filter(loans, addr_state != "")
+loans$addr_state <- factor(loans$addr_state)
+
+# convert revolv_util from a factor to a numeric variable
+loans$revol_util <- as.numeric(gsub("%", "", loans$revol_util))
+
+# get rid of empty factor
+loans <- filter(loans, initial_list_status != "")
+loans$initial_list_status <- factor(loans$initial_list_status)
+
+#
+# the following columns are deemed not useful (for the following reasons) so we exclude them:
+# mths_since_last_major_derog  (all NAs)
+# annual_inc_joint             (all NAs)
+# dti_joint                    (all NAs)
+# verification_status_joint    (all NAs)
+# tot_coll_amt                 (all NAs)
+# tot_cur_bal                  (all NAs)
+# open_acc_6m                  (all NAs)
+# open_il_6m                   (all NAs)
+# open_il_12m                  (all NAs)
+# open_il_24m                  (all NAs)
+# mths_since_rcnt_il           (all NAs)
+# total_bal_il                 (all NAs)
+# il_util                      (all NAs)
+# open_rv_12m                  (all NAs)
+# open_rv_24m                  (all NAs)
+# max_bal_bc                   (all NAs)
+# all_util                     (all NAs)
+# total_rev_hi_lim             (all NAs)
+# inq_fi                       (all NAs)
+# total_cu_tl                  (all NAs)
+# inq_last_12m                 (all NAs)
+# acc_open_past_24mths         (all NAs)
+# avg_cur_bal                  (all NAs)
+# bc_open_to_buy               (all NAs)
+# bc_util                      (all NAs)
+# mo_sin_old_il_acct           (all NAs)
+# mo_sin_old_rev_tl_op         (all NAs)
+# mo_sin_rcnt_rev_tl_op        (all NAs)
+# mo_sin_rcnt_tl               (all NAs)
+# mort_acc                     (all NAs)
+# mths_since_recent_bc         (all NAs)
+# mths_since_recent_bc_dlq     (all NAs)
+# mths_since_recent_inq        (all NAs)
+# mths_since_recent_revol_delinq (all NAs)
+# num_accts_ever_120_pd        (all NAs)
+# num_actv_bc_tl               (all NAs)
+# num_actv_rev_tl              (all NAs)
+# num_bc_sats                  (all NAs)
+# num_bc_tl                    (all NAs)
+# num_il_tl                    (all NAs)
+# num_op_rev_tl                (all NAs)
+# num_rev_accts                (all NAs)
+# num_rev_tl_bal_gt_0          (all NAs)
+# num_sats                     (all NAs)
+# num_tl_120dpd_2m             (all NAs)
+# num_tl_30dpd                 (all NAs)
+# num_tl_90g_dpd_24m           (all NAs)
+# num_tl_op_past_12m           (all NAs)
+# pct_tl_nvr_dlq               (all NAs)
+# percent_bc_gt_75             (all NAs)
+# tot_hi_cred_lim              (all NAs)
+# total_bal_ex_mort            (all NAs)
+# total_bc_limit               (all NAs)
+# total_il_high_credit_limit   (all NAs)
+# next_pymnt_d                 (doesn't seem relevant to loan status and contained a lot of missing data)
+# mths_since_last_delinq       (a very large number of NAs)
+# mths_since_last_record       (a very large number of NAs)
+# id                           (not relevant to loan status)
+# member_id                    (not relevant to loan status)
+# url                          (url for the loan details; not relevant to loan status)
+# desc                         (it's possible the information contained in the desc. could be useful; for now, I'm excluding it in part since it's a lot of data; I do have a binary variable that indicates whether or not this field is empty and do use it)
+# title                        (it's possible the information contained in the title could be useful, for now, I'm excluding it in part since it's a lot of data and I'm not sure that it would be useful)
+# emp_title                    (it's possible the information contained in emp_title could be useful; for now, I'm excluding it in part since it's a lot of data and I'm not sure that it would be useful)
+#
+```
+
+```{r, cache=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=60), fig.width=16, tidy=TRUE}
+loans <- subset(loans, select=-c(mths_since_last_major_derog, annual_inc_joint, dti_joint, verification_status_joint, tot_coll_amt, tot_cur_bal, open_acc_6m, open_il_6m, open_il_12m, open_il_24m, mths_since_rcnt_il, total_bal_il, il_util, open_rv_12m, open_rv_24m, max_bal_bc, all_util, total_rev_hi_lim, inq_fi, total_cu_tl, inq_last_12m, acc_open_past_24mths, avg_cur_bal, bc_open_to_buy, bc_util, mo_sin_old_il_acct, mo_sin_old_rev_tl_op, mo_sin_rcnt_rev_tl_op, mo_sin_rcnt_tl, mort_acc, mths_since_recent_bc, mths_since_recent_bc_dlq, mths_since_recent_inq, mths_since_recent_revol_delinq, num_accts_ever_120_pd, num_actv_bc_tl, num_actv_rev_tl, num_bc_sats, num_bc_tl, num_il_tl, num_op_rev_tl, num_rev_accts, num_rev_tl_bal_gt_0, num_sats, num_tl_120dpd_2m, num_tl_30dpd, num_tl_90g_dpd_24m, num_tl_op_past_12m, pct_tl_nvr_dlq, percent_bc_gt_75, tot_hi_cred_lim, total_bal_ex_mort, total_bc_limit, total_il_high_credit_limit, next_pymnt_d, mths_since_last_delinq, mths_since_last_record, id, member_id, url, desc, title, emp_title))
+
+#
+# create binary status variable; note: I define as "bad" any loan that is not current or not fully paid
+#
+loans <- mutate(loans, status = factor(ifelse(loan_status == "Current" | loan_status == "Fully Paid", "good", "bad"), levels=c("good", "bad")))                                                                                                             
+
+```
+# Exploratory Plots
+In this section, we create exploratory plots and/or tables for each variable to help determine which variables are likely to have an effect on the loan status and, thus, should be used in the subsequent models. Note: to generate the various plots, set the explPlots and/or the collScatterPlots variables at the beginning of the R markdown document to TRUE.
+
+```{r, cache=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=60), fig.width=16}
+
+#
+# create exploratory plots
+#
+createExplPlots <- function(dft) {
+    for (i in 1:ncol(dft)) {
+        varname = names(dft)[i]
+        print(paste(varname, ":"))
+
+        if (varname == "annual_inc") {
+            #
+            # annual income requires a limit of 200000 since there are some outliers that make
+            # the plots hard to understand or visualize
+            #
+            p <- ggplot(aes_string(x=varname, group="status", colour="status"), data=dft)
+            p <- p + geom_density() + xlab(varname) 
+            print(p)
+           
+            p <- ggplot(dft, aes_string(x="status", y=varname)) + geom_boxplot() + ylab(varname) + ylim(0., 200000.)
+            print(p)
+           
+        } else if (varname == "delinq_2yrs") {
+            #
+            # delinq_2yrs requires a limit of 5 since there are some outliers that make
+            # the plots hard to understand
+            #
+            p <- ggplot(aes_string(x=varname, group="status", colour="status"), data=dft)
+            p <- p + geom_density() + xlab(varname) 
+            print(p)
+           
+            p <- ggplot(dft, aes_string(x="status", y=varname)) + geom_boxplot() + ylab(varname) + ylim(0, 5)
+            print(p)
+           
+        } else {
+            #
+            # create plots that don't require special limits
+            #
+            p <- ggplot(aes_string(x=varname, group="status", colour="status"), data=dft)
+            p <- p + geom_density() + xlab(varname)
+            print(p)
+    
+            if (class(dft[[i]]) == "numeric" || class(dft[[i]]) == "integer") {
+                p <- ggplot(dft, aes_string(x="status", y=varname)) + geom_boxplot() + ylab(names(dft)[i])
+                print(p)
+        
+            } else {
+                print(table(dft[[i]], dft$status))
+                print(prop.table(table(dft[[i]], dft$status), 1))
+        
+            } 
+        }
+        cat("\n")
+    }
+}
+#
+# subset data by loan grade
+#
+a_loans <- loans[loans$grade == "A", ]
+b_loans <- loans[loans$grade == "B", ]
+c_loans <- loans[loans$grade == "C", ]
+d_loans <- loans[loans$grade == "D", ]
+
+#
+# create exploratory plots by loan grade
+#
+if (explPlots == TRUE) {
+    createExplPlots(a_loans)
+    createExplPlots(b_loans)
+    createExplPlots(c_loans)
+    createExplPlots(d_loans)
+}
+
+
+# 
+# select predictors that have an effect on response and get rid of rows with NAs
+#
+a_loans <- select(a_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
+b_loans <- select(b_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
+c_loans <- select(c_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
+d_loans <- select(d_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
+
+a_loans <- na.omit(a_loans)
+b_loans <- na.omit(b_loans)
+c_loans <- na.omit(c_loans)
+d_loans <- na.omit(d_loans)
+
+#
+# now check for collinearity
+#
+checkForColl <- function(l) {
+    pairs(~term + verification_status + purpose + fico_range_low + fico_range_high + inq_last_6mths +  revol_util + last_fico_range_low + last_fico_range_high + desc_empty + dti, data=l)
+}
+
+if (collScatterPlots == TRUE) {
+    checkForColl(a_loans)
+    checkForColl(b_loans)
+    checkForColl(c_loans)
+    checkForColl(d_loans)
+}
+
+
+#
+# the collinearity scatterplots suggest that there's is a correlation between fico_range_high/fico_range_low and
+# between last_fico_range_low/last_fico_range high; therefore, I won't use fico_range_low or
+# last_fico_range_log in the models to avoid collinearity
+#    
+a_loans <- select(a_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
+b_loans <- select(b_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
+c_loans <- select(c_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
+d_loans <- select(d_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
+    
+```
+# Model Construction and Execution
+The next section builds several model types (logistic, random forest, gradient boost, and support vector machine (SVM)), makes predictions and identifies the important variables in each model.
+
+
+```{r, tidy=TRUE}
+
+createDataForInput <- function(dft) {    
+    #   
+    # partition the data into a training portion and test portion
+    #
+    inTraining <- createDataPartition(dft$status, p=.75, list=FALSE)
+    dft_orig <- dft
+    dft_train <- dft_orig[inTraining, ]
+    dft_test <- dft_orig[-inTraining, ]
+
+    return(list(dft_train = dft_train, dft_test = dft_test))
+}
+
+#
+# function to create logistic regression model
+# 
+logRegModel <- function(dft_train, dft_test) {
+    modLogReg <- train(status ~ ., data=dft_train, method="glm")
+    print(modLogReg)
+    print(summary(modLogReg))
+    print(varImp(modLogReg))
+    
+    testPred <- predict(modLogReg, dft_test)
+    print(confusionMatrix(testPred, dft_test$status, positive="bad"))
+    
+    testProbs <- predict(modLogReg, dft_test, type="prob")
+    rocObj <- roc(dft_test$status, testProbs[, "bad"])
+    plot(rocObj, type="S", print.thres=.5)
+
+}
+
+#
+# function to create random forest model
+#
+rfModel <- function(dft_train, dft_test) {
+    modRandFor <- train(status ~ ., data=dft_train, method="rf")
+    print(modRandFor)
+    print(summary(modRandFor))
+    print(varImp(modRandFor))
+    
+    testPred <- predict(modRandFor, dft_test)
+    print(confusionMatrix(testPred, dft_test$status, positive="bad"))
+    
+    testProbs <- predict(modRandFor, dft_test, type="prob")
+    rocObj <- roc(dft_test$status, testProbs[, "bad"])
+    plot(rocObj, type="S", print.thres=.5)
+    
+}
+
+#
+# function to create a gradient boost model
+#
+gbModel <- function(dft_train, dft_test) {
+    modGradBoost <- train(status ~ ., data=dft_train, method="gbm", verbose=FALSE)
+    print(modGradBoost)
+    print(summary(modGradBoost))
+    print(varImp(modGradBoost))
+    
+    testPred <- predict(modGradBoost, dft_test)
+    print(confusionMatrix(testPred, dft_test$status, positive="bad"))
+    
+    testProbs <- predict(modGradBoost, dft_test, type="prob")
+    rocObj <- roc(dft_test$status, testProbs[, "bad"])
+    plot(rocObj, type="S", print.thres=.5)
+    
+}
+
+#
+# function to create SVM Gaussian kernel model
+# note: I use the "cv' method for resampling because the default boot method results in a lot of
+# warning messages about duplicate row names and the "cv" method yields results that are 
+# as accurate as the "boot" method
+#
+svmModel <- function(dft_train, dft_test) {
+    modSvm <- train(status ~ ., data=dft_train, method = "svmRadial", preProc = c("center", "scale"), trControl = trainControl(classProbs = TRUE, method="cv"))
+
+    print(modSvm)
+    print(summary(modSvm))
+    print(varImp(modSvm))
+    
+    testPred <- predict(modSvm, dft_test)
+    print(confusionMatrix(testPred, dft_test$status, positive="bad"))
+    
+    testProbs <- predict(modSvm, dft_test, type="prob")
+    rocObj <- roc(dft_test$status, testProbs[, "bad"])
+    plot(rocObj, type="S", print.thres=.5)
+    
+}
+```
+
+## Results for Grade A Loans
+Only a small percentage (~7%) of the Grade A loans go bad, making it somewhat challenging to identify those loans, but, since there are so few, it's also less important. The results show that the four models had sensitivities (i.e., ability to correctly predict the bad loans) ranging from 9% to 26%.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, but, of course, with a higher false positive rate. The FICO range and the number of inquiries in the past 6 months were important predictors.
+
+```{r, tidy=TRUE, echo=FALSE}
+lA <- createDataForInput(a_loans)
+```
+### **Logistic Regression Model**
+```{r, tidy=TRUE, echo=FALSE}
+logRegModel(lA$dft_train, lA$dft_test)
+```
+### **Random Forest Model**
+```{r, tidy=TRUE, echo=FALSE}
+rfModel(lA$dft_train, lA$dft_test)
+```
+### **Gradient Boost Model**
+```{r, tidy=TRUE, echo=FALSE}
+gbModel(lA$dft_train, lA$dft_test)
+```
+### **SVM Model**
+```{r, tidy=TRUE, echo=FALSE}
+svmModel(lA$dft_train, lA$dft_test)
+```
+
+## Results for Grade B Loans
+Approximately 16% of the Grade B loans in this dataset went bad.  With the four models, we were able to predict between 40% and 52% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+```{r, tidy=TRUE, echo=FALSE}
+lB <- createDataForInput(b_loans)
+```
+### **Logistic Regression Model**
+```{r, tidy=TRUE, echo=FALSE}
+logRegModel(lB$dft_train, lB$dft_test)
+```
+### **Random Forest Model**
+```{r, tidy=TRUE, echo=FALSE}
+rfModel(lB$dft_train, lB$dft_test)
+```
+### **Gradient Boost Model**
+```{r, tidy=TRUE, echo=FALSE}
+gbModel(lB$dft_train, lB$dft_test)
+```
+### **SVM Model**
+```{r, tidy=TRUE, echo=FALSE}
+svmModel(lB$dft_train, lB$dft_test)
+```
+
+## Results for Grade C Loans
+Approximately 25% of the Grade C loans in this dataset went bad.  With the four models, we were able to correctly predict between 58% and 66% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+```{r, tidy=TRUE, echo=FALSE}
+lC <- createDataForInput(c_loans)
+```
+### **Logistic Regression Model**
+```{r, tidy=TRUE, echo=FALSE}
+logRegModel(lC$dft_train, lC$dft_test)
+```
+### **Random Forest Model**
+```{r, tidy=TRUE, echo=FALSE}
+rfModel(lC$dft_train, lC$dft_test)
+```
+### **Gradient Boost Model**
+```{r, tidy=TRUE, echo=FALSE}
+gbModel(lC$dft_train, lC$dft_test)
+```
+### **SVM Model**
+```{r, tidy=TRUE, echo=FALSE}
+svmModel(lC$dft_train, lC$dft_test)
+```
+
+## Results for Grade D Loans
+Approximately 35% of the Grade D loans in this dataset went bad.  With the four models, we were able to correctly predict between 65% and 77% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+```{r, tidy=TRUE, echo=FALSE}
+lD <- createDataForInput(d_loans)
+```
+### **Logistic Regression Model**
+```{r, tidy=TRUE, echo=FALSE}
+logRegModel(lD$dft_train, lD$dft_test)
+```
+### **Random Forest Model**
+```{r, tidy=TRUE, echo=FALSE}
+rfModel(lD$dft_train, lD$dft_test)
+```
+### **Gradient Boost Model**
+```{r, tidy=TRUE, echo=FALSE}
+gbModel(lD$dft_train, lD$dft_test)
+```
+### **SVM Model**
+```{r, tidy=TRUE, echo=FALSE}
+svmModel(lD$dft_train, lD$dft_test)
+```
