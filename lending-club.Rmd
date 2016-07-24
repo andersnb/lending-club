@@ -17,7 +17,7 @@ collScatterPlots = FALSE
 ```
 
 # Introduction and Executive Summary
-This document presents an analysis of lending club data for loans issued between June 2007 and December 2011, with the goal of predicting which loans will go "bad" (i.e., the borrower misses a payment or defaults). This analysis is done with the loan grade held constant (e.g., analysis for all A loans, analysis for all B loans, etc.), which can be useful; for example, if we could identify all the grade D loans that would not go bad, we would have the best of both worlds: high interest rates, but no risk of loss from default. For this study, loans with grade A, B, C, and D were considered (not enough data for grade E loans). Also, this study used four different model types: logistic regression, random forest, gradient boost, and support vector machines. The results from the different models were similar, although the gradient boost results were slightly more accurate (at least for the given random number seed).
+This document presents an analysis of lending club data for loans issued between June 2007 and December 2011, with the goal of predicting which loans will go "bad" (i.e., the borrower misses a payment or defaults). This analysis is done with the loan grade held constant (e.g., analysis for all A loans, analysis for all B loans, etc.), which can be useful; for example, if we could identify all the grade D loans that would not go bad, we would have the best of both worlds: high interest rates, but no risk of loss from default. For this study, loans with grade A, B, C, and D were considered (not enough data for grade E loans). Also, this study used five different model types: logistic regression, random forest, gradient boost, support vector machines, and neural networks. The results from the different models were similar, although the some models performed slightly better than others.
 
 For the grade C and D loans (the ones with the most defaults), we can correctly identify over 65% of the loans that will go bad. Also for these same loan grades, all four of the models identified the same two predictors that were most important in predicting which loans will go bad: FICO score and the number of credit inquiries in the past six months.
 
@@ -47,7 +47,8 @@ library(kernlab)
 #
 # read in the lending club data
 #
-loans <- read.csv("./LoanStats3a_securev1.csv")
+setwd("/Users/andersnb/lending-club/my-analysis")
+loans <- read.csv("../data/LoanStats3a_securev1.csv")
 str(loans)  
 
 # initialize random number generator
@@ -344,7 +345,7 @@ d_loans <- select(d_loans, c(status, term, verification_status, purpose, fico_ra
     
 ```
 # Model Construction and Execution
-The next section builds several model types (logistic, random forest, gradient boost, and support vector machine (SVM)), makes predictions and identifies the important variables in each model.
+The next section builds several model types (logistic, random forest, gradient boost, support vector machine (SVM), and neural network), makes predictions and identifies the important variables in each model.
 
 
 ```{r, tidy=TRUE}
@@ -436,10 +437,32 @@ svmModel <- function(dft_train, dft_test) {
     plot(rocObj, type="S", print.thres=.5)
     
 }
+
+#
+# function to create neural network model
+# note: I use one hidden layer, but, via the tuneLength paramter to train, 
+# specify that it try 7 different parameter values (higher than for the
+# other model types)
+#
+nnetModel <- function(dft_train, dft_test) {
+    modNnet <- train(status ~ ., data=dft_train, method = "nnet", tuneLength=7, trace=FALSE)
+
+    print(modNnet)
+    print(summary(modNnet))
+    print(varImp(modNnet))
+    
+    testPred <- predict(modNnet, dft_test)
+    print(confusionMatrix(testPred, dft_test$status, positive="bad"))
+    
+    testProbs <- predict(modNnet, dft_test, type="prob")
+    rocObj <- roc(dft_test$status, testProbs[, "bad"])
+    plot(rocObj, type="S", print.thres=.5)
+    
+}
 ```
 
 ## Results for Grade A Loans
-Only a small percentage (~7%) of the Grade A loans go bad, making it somewhat challenging to identify those loans, but, since there are so few, it's also less important. The results show that the four models had sensitivities (i.e., ability to correctly predict the bad loans) ranging from 9% to 26%.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, but, of course, with a higher false positive rate. The FICO range and the number of inquiries in the past 6 months were important predictors.
+Only a small percentage (~7%) of the Grade A loans go bad, making it somewhat challenging to identify those loans, but, since there are so few, it's also less important. The results show that the five models had sensitivities (i.e., ability to correctly predict the bad loans) ranging from 0% to 26%.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, but, of course, with a higher false positive rate. The FICO range and the number of inquiries in the past 6 months were important predictors.
 
 ```{r, tidy=TRUE, echo=FALSE}
 lA <- createDataForInput(a_loans)
@@ -460,9 +483,13 @@ gbModel(lA$dft_train, lA$dft_test)
 ```{r, tidy=TRUE, echo=FALSE}
 svmModel(lA$dft_train, lA$dft_test)
 ```
+### **Neural Net Model**
+```{r, tidy=TRUE, echo=FALSE}
+nnetModel(lA$dft_train, lA$dft_test)
+```
 
 ## Results for Grade B Loans
-Approximately 16% of the Grade B loans in this dataset went bad.  With the four models, we were able to predict between 40% and 52% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+Approximately 16% of the Grade B loans in this dataset went bad.  With the four models, we were able to predict between 48% and 59% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
 ```{r, tidy=TRUE, echo=FALSE}
 lB <- createDataForInput(b_loans)
 ```
@@ -482,9 +509,13 @@ gbModel(lB$dft_train, lB$dft_test)
 ```{r, tidy=TRUE, echo=FALSE}
 svmModel(lB$dft_train, lB$dft_test)
 ```
+### **Neural Net Model**
+```{r, tidy=TRUE, echo=FALSE}
+nnetModel(lB$dft_train, lB$dft_test)
+```
 
 ## Results for Grade C Loans
-Approximately 25% of the Grade C loans in this dataset went bad.  With the four models, we were able to correctly predict between 58% and 66% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+Approximately 25% of the Grade C loans in this dataset went bad.  With the four models, we were able to correctly predict between 55% and 65% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
 ```{r, tidy=TRUE, echo=FALSE}
 lC <- createDataForInput(c_loans)
 ```
@@ -504,9 +535,13 @@ gbModel(lC$dft_train, lC$dft_test)
 ```{r, tidy=TRUE, echo=FALSE}
 svmModel(lC$dft_train, lC$dft_test)
 ```
+### **Neural Net Model**
+```{r, tidy=TRUE, echo=FALSE}
+nnetModel(lC$dft_train, lC$dft_test)
+```
 
 ## Results for Grade D Loans
-Approximately 35% of the Grade D loans in this dataset went bad.  With the four models, we were able to correctly predict between 65% and 77% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+Approximately 35% of the Grade D loans in this dataset went bad.  With the four models, we were able to correctly predict between 63% and 72% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
 ```{r, tidy=TRUE, echo=FALSE}
 lD <- createDataForInput(d_loans)
 ```
@@ -525,4 +560,8 @@ gbModel(lD$dft_train, lD$dft_test)
 ### **SVM Model**
 ```{r, tidy=TRUE, echo=FALSE}
 svmModel(lD$dft_train, lD$dft_test)
+```
+### **Neural Net Model**
+```{r, tidy=TRUE, echo=FALSE}
+nnetModel(lD$dft_train, lD$dft_test)
 ```
