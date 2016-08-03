@@ -19,7 +19,7 @@ collScatterPlots = FALSE
 # Introduction and Executive Summary
 This document presents an analysis of lending club data for loans issued between June 2007 and December 2011, with the goal of predicting which loans will go "bad" (i.e., the borrower misses a payment or defaults). This analysis is done with the loan grade held constant (e.g., analysis for all A loans, analysis for all B loans, etc.), which can be useful; for example, if we could identify all the grade D loans that would not go bad, we would have the best of both worlds: high interest rates, but no risk of loss from default. For this study, loans with grade A, B, C, and D were considered (not enough data for grade E loans). Also, this study used five different model types: logistic regression, random forest, gradient boost, support vector machines, and neural networks. The results from the different models were similar, although the some models performed slightly better than others.
 
-For the grade C and D loans (the ones with the most defaults), we can correctly identify over 65% of the loans that will go bad. Also for these same loan grades, all four of the models identified the same two predictors that were most important in predicting which loans will go bad: FICO score and the number of credit inquiries in the past six months.
+For the grade C and D loans (the ones with the most defaults), we can correctly identify approximately 60% of the loans that will go bad. Also for these same loan grades, all five of the models identified the number of credit inquiries in the past six months as one of the top two predictors that were most important in predicting which loans will go bad; FICO score was also identified as important in many models.
 
 Details on these and other results are shown below.
 
@@ -216,11 +216,12 @@ loans$initial_list_status <- factor(loans$initial_list_status)
 # desc                         (it's possible the information contained in the desc. could be useful; for now, I'm excluding it in part since it's a lot of data; I do have a binary variable that indicates whether or not this field is empty and do use it)
 # title                        (it's possible the information contained in the title could be useful, for now, I'm excluding it in part since it's a lot of data and I'm not sure that it would be useful)
 # emp_title                    (it's possible the information contained in emp_title could be useful; for now, I'm excluding it in part since it's a lot of data and I'm not sure that it would be useful)
-#
+# last_fico_range_high         (this data is not available at time of loan origination so can't be used)
+# last_fico_range_low          (this data is not available at time of loan origination so can't be used)
 ```
 
 ```{r, cache=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=60), fig.width=16, tidy=TRUE}
-loans <- subset(loans, select=-c(mths_since_last_major_derog, annual_inc_joint, dti_joint, verification_status_joint, tot_coll_amt, tot_cur_bal, open_acc_6m, open_il_6m, open_il_12m, open_il_24m, mths_since_rcnt_il, total_bal_il, il_util, open_rv_12m, open_rv_24m, max_bal_bc, all_util, total_rev_hi_lim, inq_fi, total_cu_tl, inq_last_12m, acc_open_past_24mths, avg_cur_bal, bc_open_to_buy, bc_util, mo_sin_old_il_acct, mo_sin_old_rev_tl_op, mo_sin_rcnt_rev_tl_op, mo_sin_rcnt_tl, mort_acc, mths_since_recent_bc, mths_since_recent_bc_dlq, mths_since_recent_inq, mths_since_recent_revol_delinq, num_accts_ever_120_pd, num_actv_bc_tl, num_actv_rev_tl, num_bc_sats, num_bc_tl, num_il_tl, num_op_rev_tl, num_rev_accts, num_rev_tl_bal_gt_0, num_sats, num_tl_120dpd_2m, num_tl_30dpd, num_tl_90g_dpd_24m, num_tl_op_past_12m, pct_tl_nvr_dlq, percent_bc_gt_75, tot_hi_cred_lim, total_bal_ex_mort, total_bc_limit, total_il_high_credit_limit, next_pymnt_d, mths_since_last_delinq, mths_since_last_record, id, member_id, url, desc, title, emp_title))
+loans <- subset(loans, select=-c(mths_since_last_major_derog, annual_inc_joint, dti_joint, verification_status_joint, tot_coll_amt, tot_cur_bal, open_acc_6m, open_il_6m, open_il_12m, open_il_24m, mths_since_rcnt_il, total_bal_il, il_util, open_rv_12m, open_rv_24m, max_bal_bc, all_util, total_rev_hi_lim, inq_fi, total_cu_tl, inq_last_12m, acc_open_past_24mths, avg_cur_bal, bc_open_to_buy, bc_util, mo_sin_old_il_acct, mo_sin_old_rev_tl_op, mo_sin_rcnt_rev_tl_op, mo_sin_rcnt_tl, mort_acc, mths_since_recent_bc, mths_since_recent_bc_dlq, mths_since_recent_inq, mths_since_recent_revol_delinq, num_accts_ever_120_pd, num_actv_bc_tl, num_actv_rev_tl, num_bc_sats, num_bc_tl, num_il_tl, num_op_rev_tl, num_rev_accts, num_rev_tl_bal_gt_0, num_sats, num_tl_120dpd_2m, num_tl_30dpd, num_tl_90g_dpd_24m, num_tl_op_past_12m, pct_tl_nvr_dlq, percent_bc_gt_75, tot_hi_cred_lim, total_bal_ex_mort, total_bc_limit, total_il_high_credit_limit, next_pymnt_d, mths_since_last_delinq, mths_since_last_record, id, member_id, url, desc, title, emp_title, last_fico_range_high, last_fico_range_low))
 
 #
 # create binary status variable; note: I define as "bad" any loan that is not current or not fully paid
@@ -306,12 +307,12 @@ if (explPlots == TRUE) {
 
 
 # 
-# select predictors that have an effect on response and get rid of rows with NAs
+# Based on exploratory plots, select predictors that have an effect on response and get rid of rows with NAs
 #
-a_loans <- select(a_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
-b_loans <- select(b_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
-c_loans <- select(c_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
-d_loans <- select(d_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, last_fico_range_low, last_fico_range_high, desc_empty, dti))
+a_loans <- select(a_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, desc_empty, dti))
+b_loans <- select(b_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, desc_empty, dti))
+c_loans <- select(c_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, desc_empty, dti))
+d_loans <- select(d_loans, c(status, term, verification_status, purpose, fico_range_low, fico_range_high, inq_last_6mths,   revol_util, desc_empty, dti))
 
 a_loans <- na.omit(a_loans)
 b_loans <- na.omit(b_loans)
@@ -322,7 +323,7 @@ d_loans <- na.omit(d_loans)
 # now check for collinearity
 #
 checkForColl <- function(l) {
-    pairs(~term + verification_status + purpose + fico_range_low + fico_range_high + inq_last_6mths +  revol_util + last_fico_range_low + last_fico_range_high + desc_empty + dti, data=l)
+    pairs(~term + verification_status + purpose + fico_range_low + fico_range_high + inq_last_6mths +  revol_util + desc_empty + dti, data=l)
 }
 
 if (collScatterPlots == TRUE) {
@@ -334,18 +335,17 @@ if (collScatterPlots == TRUE) {
 
 
 #
-# the collinearity scatterplots suggest that there's is a correlation between fico_range_high/fico_range_low and
-# between last_fico_range_low/last_fico_range high; therefore, I won't use fico_range_low or
-# last_fico_range_log in the models to avoid collinearity
+# the collinearity scatterplots suggest that there's is a correlation between fico_range_high/fico_range_low
+# therefore, I won't use fico_range_low in the models to avoid collinearity
 #    
-a_loans <- select(a_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
-b_loans <- select(b_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
-c_loans <- select(c_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
-d_loans <- select(d_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, last_fico_range_high, desc_empty, dti))
+a_loans <- select(a_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, desc_empty, dti))
+b_loans <- select(b_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, desc_empty, dti))
+c_loans <- select(c_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, desc_empty, dti))
+d_loans <- select(d_loans, c(status, term, verification_status, purpose, fico_range_high, inq_last_6mths, revol_util, desc_empty, dti))
     
 ```
 # Model Construction and Execution
-The next section builds several model types (logistic, random forest, gradient boost, support vector machine (SVM), and neural network), makes predictions and identifies the important variables in each model.
+The next section builds several model types (logistic, random forest, gradient boost, support vector machine (SVM), and neural network), makes predictions and identifies the important variables in each model. We use the default probability threshold of 0.5 for the classification threshold used for the confusion matrix, but we use a probability of threshold of 0.25 for the annotated point on the ROC curves.
 
 
 ```{r, tidy=TRUE}
@@ -376,7 +376,7 @@ logRegModel <- function(dft_train, dft_test) {
     
     testProbs <- predict(modLogReg, dft_test, type="prob")
     rocObj <- roc(dft_test$status, testProbs[, "bad"])
-    plot(rocObj, type="S", print.thres=.5)
+    plot(rocObj, type="S", print.thres=.25)
 
 }
 
@@ -394,7 +394,7 @@ rfModel <- function(dft_train, dft_test) {
     
     testProbs <- predict(modRandFor, dft_test, type="prob")
     rocObj <- roc(dft_test$status, testProbs[, "bad"])
-    plot(rocObj, type="S", print.thres=.5)
+    plot(rocObj, type="S", print.thres=.25)
     
 }
 
@@ -412,7 +412,7 @@ gbModel <- function(dft_train, dft_test) {
     
     testProbs <- predict(modGradBoost, dft_test, type="prob")
     rocObj <- roc(dft_test$status, testProbs[, "bad"])
-    plot(rocObj, type="S", print.thres=.5)
+    plot(rocObj, type="S", print.thres=.25)
     
 }
 
@@ -434,12 +434,12 @@ svmModel <- function(dft_train, dft_test) {
     
     testProbs <- predict(modSvm, dft_test, type="prob")
     rocObj <- roc(dft_test$status, testProbs[, "bad"])
-    plot(rocObj, type="S", print.thres=.5)
+    plot(rocObj, type="S", print.thres=.25)
     
 }
 
 #
-# function to create neural network model
+# function to create neural network model;
 # note: I use one hidden layer, but, via the tuneLength paramter to train, 
 # specify that it try 7 different parameter values (higher than for the
 # other model types)
@@ -456,13 +456,13 @@ nnetModel <- function(dft_train, dft_test) {
     
     testProbs <- predict(modNnet, dft_test, type="prob")
     rocObj <- roc(dft_test$status, testProbs[, "bad"])
-    plot(rocObj, type="S", print.thres=.5)
+    plot(rocObj, type="S", print.thres=.25)
     
 }
 ```
 
 ## Results for Grade A Loans
-Only a small percentage (~7%) of the Grade A loans go bad, making it somewhat challenging to identify those loans, but, since there are so few, it's also less important. The results show that the five models had sensitivities (i.e., ability to correctly predict the bad loans) ranging from 0% to 26%.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, but, of course, with a higher false positive rate. The FICO range and the number of inquiries in the past 6 months were important predictors.
+Only a small percentage (~7%) of the Grade A loans go bad, making it somewhat challenging to identify those loans, but, since there are so few, it's also less important. The results show that the five models had sensitivities (i.e., ability to correctly predict the bad loans) ranging from 0% to 4%.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, but, of course, with a higher false positive rate. The FICO range and the number of inquiries in the past 6 months were important predictors with several of the models.
 
 ```{r, tidy=TRUE, echo=FALSE}
 lA <- createDataForInput(a_loans)
@@ -489,7 +489,7 @@ nnetModel(lA$dft_train, lA$dft_test)
 ```
 
 ## Results for Grade B Loans
-Approximately 16% of the Grade B loans in this dataset went bad.  With the four models, we were able to predict between 48% and 59% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+Approximately 16% of the Grade B loans in this dataset went bad.  With the four models, we were able to predict between 9% and 24% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
 ```{r, tidy=TRUE, echo=FALSE}
 lB <- createDataForInput(b_loans)
 ```
@@ -515,7 +515,7 @@ nnetModel(lB$dft_train, lB$dft_test)
 ```
 
 ## Results for Grade C Loans
-Approximately 25% of the Grade C loans in this dataset went bad.  With the four models, we were able to correctly predict between 55% and 65% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+Approximately 25% of the Grade C loans in this dataset went bad.  With the four models, we were able to correctly predict between 38% and 40% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
 ```{r, tidy=TRUE, echo=FALSE}
 lC <- createDataForInput(c_loans)
 ```
@@ -541,7 +541,7 @@ nnetModel(lC$dft_train, lC$dft_test)
 ```
 
 ## Results for Grade D Loans
-Approximately 35% of the Grade D loans in this dataset went bad.  With the four models, we were able to correctly predict between 63% and 72% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
+Approximately 35% of the Grade D loans in this dataset went bad.  With the four models, we were able to correctly predict between 50% and 55% of the bad loans.  This predictive ability is based on a 50% probability classification cutoff. As the ROC curves show, it's possible to predict the bad loans with a higher probability, of course, with a higher false positive rate, though.  The FICO range and the number of inquiries in the past 6 months were also important predictors for this loan grade.
 ```{r, tidy=TRUE, echo=FALSE}
 lD <- createDataForInput(d_loans)
 ```
